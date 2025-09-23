@@ -1,0 +1,38 @@
+seed: 123
+
+total_timesteps: 1000000
+save_path: saved_models/pro_model.zip
+
+env_config_path: training_configurations/env_config.yaml
+n_envs: 4
+use_flatten_wrapper: true
+max_episode_steps: 100        # Set to null for infinite horizon
+
+dry_run: false
+train_then_eval: true
+eval_every_timesteps: 32768
+online_eval_episodes: 100
+
+policy: MlpPolicy
+learning_rate: 0.0003
+n_steps: 8192
+batch_size: 1024
+n_epochs: 64
+gamma: 0.99
+gae_lambda: 0.95
+clip_range: 0.2
+ent_coef: 0.01
+vf_coef: 0.5
+max_grad_norm: 0.5
+target_kl: null
+
+# Neural network kwargs (optional)
+policy_kwargs:
+  net_arch:
+    pi: [128, 128, 64]  # Policy network
+    vf: [128, 128, 64]  # Value network 
+
+# Evaluation
+eval_episodes: 100
+eval_seed: 9999
+deterministic_eval: true  # Take the greedy action during evaluation. If set to false then we sample the policy

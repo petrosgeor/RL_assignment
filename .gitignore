@@ -1,0 +1,9 @@
+*.md
+!README.md
+
+*.json
+*.txt
+!requirements.txt
+*.sh
+__pycache__/
+tests/*

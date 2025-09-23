@@ -1,0 +1,36 @@
+seed: 123
+
+total_timesteps: 1000000
+save_path: saved_models/dqn_model.zip
+
+env_config_path: training_configurations/env_config.yaml
+n_envs: 1   # set to 1 for dqn to keep training straightforward
+use_flatten_wrapper: true
+max_episode_steps: 100  # set to null for infinite
+
+dry_run: false
+train_then_eval: true
+
+eval_every_timesteps: 32768
+online_eval_episodes: 100
+eval_episodes: 100    # Run eval_episodes in a fixed environment
+eval_seed: 9999
+deterministic_eval: true
+
+policy: MlpPolicy
+policy_kwargs:
+  net_arch: [128, 128, 64]
+
+# DQN hyperparameters
+learning_rate: 0.0005
+buffer_size: 65536    # defines how much history you can learn from. This is basically a moving window
+learning_starts: 8192 # After this many samples are collected, the training starts
+batch_size: 2048
+gamma: 0.99
+train_freq: 16     # controls how often the learner does gradient updates
+gradient_steps: 2   # gradient steps on a batch
+target_update_interval: 1024  # How often to copy the rarget Q-network
+exploration_fraction: 0.15   # How long we linearly anneal epsilon for (e.g. for 1000 total steps the schedule runs over the first 100 steps for the value 0.1)
+exploration_final_eps: 0.02  # After the initial annealing of epsilon, exploration_final_eps are random actions (not greedy)
+max_grad_norm: 10.0         # Clip the gradient for stability. 
+

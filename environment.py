@@ -1,10 +1,7 @@
 """Grid-based Gymnasium environment for Part 2 of the RL assignment."""
-
-from __future__ import annotations
-
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Sequence, Tuple
+from typing import Sequence
 
 import gymnasium as gym
 import numpy as np
@@ -12,10 +9,10 @@ import yaml
 from gymnasium import spaces
 
 Action = int
-Coordinate = Tuple[int, int]
+Coordinate = tuple[int, int]
 
 # Mapping from discrete action index to row/column deltas.
-ACTION_TO_DELTA: dict[Action, Coordinate] = {
+ACTION_TO_DELTA = {
     0: (-1, 0),  # up
     1: (1, 0),   # down
     2: (0, -1),  # left
@@ -25,12 +22,12 @@ ACTION_TO_DELTA: dict[Action, Coordinate] = {
 
 @dataclass(frozen=True)
 class GridConfig:
-    """Immortalizes the grid dimensions and obstacle count for the environment.
+    """Stores the grid dimensions and obstacle count for the environment.
 
     Args:
-        grid_rows (int): Number of rows ``M`` in the grid.
-        grid_cols (int): Number of columns ``N`` in the grid.
-        num_obstacles (int): Number of static obstacles ``K`` to place each episode.
+        grid_rows (int): Number of rows M in the grid.
+        grid_cols (int): Number of columns N in the grid.
+        num_obstacles (int): Number of static obstacles K to place each episode.
 
     Attributes:
         grid_rows (int): Stored number of grid rows.
@@ -43,18 +40,6 @@ class GridConfig:
     num_obstacles: int
 
     def validate(self) -> None:
-        """Checks that the configuration satisfies the Part 2 feasibility constraints.
-
-        Args:
-            None
-
-        Returns:
-            None
-
-        Raises:
-            ValueError: If any dimension is invalid or the obstacle count is infeasible.
-        """
-
         if self.grid_rows < 2 or self.grid_cols < 2:
             raise ValueError("grid_rows and grid_cols must both be >= 2")
         max_obstacles = self.grid_rows * self.grid_cols - 2
@@ -66,17 +51,11 @@ class GridConfig:
             raise ValueError(msg)
 
 
-def load_grid_config(
-    path: str | Path = "training_configurations/env_config.yaml",
-) -> GridConfig:
+def load_grid_config(path= "training_configurations/env_config.yaml",) -> GridConfig:
     """Loads and validates the grid configuration stored in YAML format.
-
     Args:
-        path (str | Path): Location of the YAML file describing the grid. By
-            default, this reads from ``training_configurations/env_config.yaml``.
-            For backward compatibility, if the file is not found at the given
-            path and it equals the default, the loader will fall back to
-            ``config.yaml`` in the project root.
+        path: Location of the YAML file describing the grid. By
+            default, this reads from training_configurations/env_config.yaml.
 
     Returns:
         GridConfig: Validated configuration ready for environment construction.
@@ -99,9 +78,9 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
     """Dynamic grid world with random start, goal, and obstacles each episode.
 
     Args:
-        rows (int): Number of grid rows ``M``.
-        cols (int): Number of grid columns ``N``.
-        num_obstacles (int): Number of obstacles ``K`` to place per episode.
+        rows (int): Number of grid rows M.
+        cols (int): Number of grid columns N.
+        num_obstacles (int): Number of obstacles K to place per episode.
 
     Attributes:
         rows (int): Total number of rows in the grid layout.
@@ -121,9 +100,9 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
         """Initializes the grid environment with validated dimensions and spaces.
 
         Args:
-            rows (int): Number of grid rows ``M``.
-            cols (int): Number of grid columns ``N``.
-            num_obstacles (int): Number of obstacles ``K`` to place per episode.
+            rows (int): Number of grid rows M.
+            cols (int): Number of grid columns N.
+            num_obstacles (int): Number of obstacles K to place per episode.
 
         Returns:
             None
@@ -158,16 +137,15 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
 
     def reset(
         self,
-        *,
-        seed: Optional[int] = None,
-        options: Optional[dict[str, Sequence[Coordinate]]] = None,
-    ) -> tuple[np.ndarray, dict[str, object]]:
-        """Resets the environment by sampling fresh start, goal, and obstacles.
+        seed = None,
+        options = None,
+    ) -> tuple:
+        """Resets the environment by sampling fresh a start, goal, and obstacles.
 
         Args:
-            seed (Optional[int]): Seed used to initialize the RNG for reproducibility.
-            options (Optional[dict[str, Sequence[Coordinate]]]): Optional overrides for
-                ``agent_position``, ``goal_position``, or ``obstacle_positions``. All
+            seed: Seed used to initialize the RNG for reproducibility.
+            options : Optional dictionary overriding the
+                agent_position, goal_position, or obstacle_positions. All
                 supplied coordinates must lie inside the grid and be mutually unique.
 
         Returns:
@@ -188,9 +166,7 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
         info = {"reason": "reset"}
         return observation, info
 
-    def step(
-        self, action: Action
-    ) -> tuple[np.ndarray, float, bool, bool, dict[str, object]]:
+    def step(self, action: Action) -> tuple:
         """Executes a single action and reports the transition outcome.
 
         Args:
@@ -204,9 +180,11 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
         if not self.action_space.contains(action):
             raise ValueError(f"Action {action!r} is outside the valid range 0-3")
 
-        row_delta, col_delta = ACTION_TO_DELTA[action]
-        candidate = (self.agent_position[0] + row_delta, self.agent_position[1] + col_delta)
+        row_delta, col_delta = ACTION_TO_DELTA[action]  # Map the action
+        candidate = (self.agent_position[0] + row_delta, self.agent_position[1] + col_delta)    # The new position of the agent, based on the current position and the action
 
+
+        # Initialization 
         terminated = False
         truncated = False
         reward = -1.0
@@ -236,15 +214,15 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
         }
         return observation, reward, terminated, truncated, info
 
-    def render(self, mode: str = "human") -> Optional[str]:
+    def render(self, mode: str = "human") -> str:
         """Displays the current grid state using ASCII characters.
 
         Args:
-            mode (str): Either ``"human"`` to print to stdout or ``"ansi"`` to return a
+            mode (str): Either human to print to stdout or ansi to return a
                 string representation.
 
         Returns:
-            Optional[str]: Rendered grid when ``mode == "ansi"``; otherwise ``None``.
+            str: Rendered grid when mode == ansi; otherwise None.
         """
 
         grid = [["." for _ in range(self.cols)] for _ in range(self.rows)]
@@ -266,15 +244,22 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
     # ------------------------------------------------------------------
     # Helper methods
     # ------------------------------------------------------------------
-    def _apply_overrides(self, overrides: dict[str, Sequence[Coordinate]]) -> None:
-        """Loads explicit layout coordinates provided via ``reset`` options.
+    def _apply_overrides(self, overrides: dict) -> None:
+        """Loads explicit layout coordinates provided via reset options.
 
         Args:
-            overrides (dict[str, Sequence[Coordinate]]): Coordinate overrides for
-                ``agent_position``, ``goal_position``, and/or ``obstacle_positions``.
+            overrides (dict): Coordinate overrides for
+                agent_position, goal_position, and/or obstacle_positions.
 
         Returns:
             None
+
+        Example:
+            An overrides mapping must include all three entries and match the configured number of obstacles.
+            Concretely we might have: 
+            agent_position: (0, 0)
+            goal_position: (5, 5)
+            obstacle_positions: [(1, 1), (2, 3), (4, 4)]
         """
 
         agent = overrides.get("agent_position")
@@ -283,8 +268,7 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
 
         if agent is None or goal is None or obstacles is None:
             raise ValueError(
-                "overrides must include agent_position, goal_position, and "
-                "obstacle_positions"
+                "overrides must include agent_position, goal_position, and obstacle_positions"
             )
 
         agent_coord = self._validate_coordinate(agent)
@@ -314,15 +298,15 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
             None
         """
 
-        assert self.np_random is not None
-        total_cells = self.rows * self.cols
-        required = self.num_obstacles + 2
-        indices = self.np_random.permutation(total_cells)[:required]
-        coordinates = [divmod(index, self.cols) for index in indices]
+        assert self.np_random is not None  # ensure RNG is ready (set in reset)
+        total_cells = self.rows * self.cols  # total number of cells in the grid
+        required = self.num_obstacles + 2  # sample agent + goal + all obstacles
+        indices = self.np_random.permutation(total_cells)[:required]  # unique cells
+        coordinates = [divmod(index, self.cols) for index in indices]  # to (row, col)
 
-        self.agent_position = coordinates[0]
-        self.goal_position = coordinates[1]
-        self.obstacle_positions = set(coordinates[2:])
+        self.agent_position = coordinates[0]  # first cell becomes agent start
+        self.goal_position = coordinates[1]  # second cell becomes goal position
+        self.obstacle_positions = set(coordinates[2:])  # remaining cells are obstacles
 
     def _build_observation(self) -> np.ndarray:
         """Constructs the layered observation tensor describing the grid state.
@@ -331,7 +315,9 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
             None
 
         Returns:
-            np.ndarray: Binary tensor with agent, goal, and obstacle layers.
+            np.ndarray: 3D Binary tensor with agent, goal, and obstacle layers.
+
+        The first layer shows where the agent is. The second the goal position and the third one the obstacle positions 
         """
 
         observation = np.zeros(self.observation_space.shape, dtype=np.float32)
@@ -350,7 +336,7 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
             coordinate (Coordinate): Row and column indices being validated.
 
         Returns:
-            bool: ``True`` when the coordinate is inside the grid bounds.
+            bool: True when the coordinate is inside the grid bounds.
         """
 
         row, col = coordinate
@@ -374,31 +360,10 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
         return row, col
 
 
-def register_grid_env(env_id: str = "RLAssignment/GridEnv-v0") -> None:
-    """Registers ``GridEnv`` with Gymnasium to enable ``gym.make`` usage.
-
-    Args:
-        env_id (str): Identifier used for environment registration.
-
-    Returns:
-        None: The registration has the side effect of updating Gymnasium's registry.
-    """
-
-    from gymnasium.envs.registration import register
-    from gymnasium.error import Error
-
-    try:
-        register(
-            id=env_id,
-            entry_point="environment:GridEnv",
-        )
-    except Error:
-        # Registration already exists; ignore to keep helper idempotent.
-        pass
 
 
 def create_env_from_config(config: GridConfig) -> GridEnv:
-    """Instantiates ``GridEnv`` based on validated ``GridConfig`` values.
+    """Instantiates GridEnv based on validated GridConfig values.
 
     Args:
         config (GridConfig): Validated configuration describing the grid setup.
