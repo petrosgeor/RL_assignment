@@ -7,6 +7,11 @@ import gymnasium as gym
 import numpy as np
 import yaml
 from gymnasium import spaces
+from collections import deque
+
+# --- Potential-based shaping hyperparameters (simple and explicit) ---
+ALPHA_POT: float = 0.25   # scale of shaping signal
+GAMMA_POT: float = 0.99   # align with agent discount (defaults use 0.99)
 
 Action = int
 Coordinate = tuple[int, int]
@@ -38,6 +43,7 @@ class GridConfig:
     grid_rows: int
     grid_cols: int
     num_obstacles: int
+    use_combined_rewards: bool = False  # when true, add potential-based shaping
 
     def validate(self) -> None:
         if self.grid_rows < 2 or self.grid_cols < 2:
@@ -69,6 +75,7 @@ def load_grid_config(path= "training_configurations/env_config.yaml",) -> GridCo
         grid_rows=int(raw["grid_rows"]),
         grid_cols=int(raw["grid_cols"]),
         num_obstacles=int(raw["num_obstacles"]),
+        use_combined_rewards=bool(raw.get("use_combined_rewards", False)),
     )
     config.validate()
     return config
@@ -134,6 +141,7 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
         self.goal_position: Coordinate = (rows - 1, cols - 1)
         self.obstacle_positions: set[Coordinate] = set()
         self.np_random: np.random.Generator | None = None
+        self._dist_map = None  # filled at reset when shaping is enabled
 
     def reset(
         self,
@@ -162,6 +170,9 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
         else:
             self._sample_episode_layout()
 
+        # Build geodesic map once per episode (used when shaping is enabled)
+        self._dist_map = self._compute_geodesic_distance_map()
+
         observation = self._build_observation()
         info = {"reason": "reset"}
         return observation, info
@@ -181,7 +192,8 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
             raise ValueError(f"Action {action!r} is outside the valid range 0-3")
 
         row_delta, col_delta = ACTION_TO_DELTA[action]  # Map the action
-        candidate = (self.agent_position[0] + row_delta, self.agent_position[1] + col_delta)    # The new position of the agent, based on the current position and the action
+        curr = self.agent_position
+        candidate = (curr[0] + row_delta, curr[1] + col_delta)  # next position
 
 
         # Initialization 
@@ -205,6 +217,10 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
             reason = "goal"
         else:
             self.agent_position = candidate
+
+        # Add potential-based shaping only if enabled via config/flag
+        if getattr(self, "use_combined_rewards", False):
+            reward += self._potential_bonus_geodesic(curr, candidate, reason)
 
         observation = self._build_observation()
         info = {
@@ -329,6 +345,57 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
             observation[2, row, col] = 1.0
         return observation
 
+    def _compute_geodesic_distance_map(self) -> np.ndarray:
+        """Compute obstacle-aware shortest-path distances to the goal via BFS.
+
+        Returns an int32 array dist[r, c] with the minimum number of 4-connected
+        steps from (r, c) to the goal, respecting obstacles. Unreachable cells
+        receive D_MAX = rows + cols.
+        """
+
+        rows, cols = self.rows, self.cols
+        D_MAX = rows + cols
+        dist = np.full((rows, cols), D_MAX, dtype=np.int32)
+
+        blocked = np.zeros((rows, cols), dtype=bool)
+        for (r, c) in self.obstacle_positions:
+            blocked[r, c] = True
+
+        gr, gc = self.goal_position
+        if not (0 <= gr < rows and 0 <= gc < cols) or blocked[gr, gc]:
+            return dist
+
+        dist[gr, gc] = 0
+        q = deque([(gr, gc)])
+        while q:
+            r, c = q.popleft()
+            d = dist[r, c] + 1
+            for dr, dc in ACTION_TO_DELTA.values():
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < rows and 0 <= nc < cols and not blocked[nr, nc]:
+                    if d < dist[nr, nc]:
+                        dist[nr, nc] = d
+                        q.append((nr, nc))
+        return dist
+
+    def _potential_bonus_geodesic(self, curr: Coordinate, nxt: Coordinate, reason: str) -> float:
+        """Geodesic (obstacle-aware) potential shaping based on precomputed BFS.
+
+        r_pot = ALPHA_POT * (d_sp(s) - GAMMA_POT * d_sp(s')), suppressed on
+        invalid terminations and when distances are marked unreachable.
+        """
+
+        if reason in ("collision", "out_of_bounds"):
+            return 0.0
+        if self._dist_map is None:
+            return 0.0
+        D_MAX = self.rows + self.cols
+        d_curr = int(self._dist_map[curr[0], curr[1]])
+        d_next = int(self._dist_map[nxt[0], nxt[1]])
+        if d_curr >= D_MAX or d_next >= D_MAX:
+            return 0.0
+        return ALPHA_POT * (d_curr - GAMMA_POT * d_next)
+
     def _is_within_bounds(self, coordinate: Coordinate) -> bool:
         """Determines whether a coordinate lies inside the configured grid.
 
@@ -372,4 +439,7 @@ def create_env_from_config(config: GridConfig) -> GridEnv:
         GridEnv: New environment instance parameterized by the provided config.
     """
 
-    return GridEnv(config.grid_rows, config.grid_cols, config.num_obstacles)
+    env = GridEnv(config.grid_rows, config.grid_cols, config.num_obstacles)
+    # Propagate reward-combination flag to the environment instance
+    setattr(env, "use_combined_rewards", bool(getattr(config, "use_combined_rewards", False)))
+    return env

@@ -3,3 +3,6 @@
 grid_rows: 6
 grid_cols: 6
 num_obstacles: 5
+
+# When true combine both rewards
+use_combined_rewards: false

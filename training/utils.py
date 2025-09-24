@@ -103,7 +103,7 @@ def print_summary(config) -> None:
         "n_envs": getattr(config, "n_envs", ""),
         "policy": getattr(config, "policy", ""),
     }
-    print("PPO Training Summary:")
+    print("Training Summary:")
     for key, value in summary.items():
         print(f"  {key}: {value}")
 

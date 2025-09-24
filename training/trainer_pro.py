@@ -92,7 +92,7 @@ def train_model(model: PPO, cfg: dict) -> int:
 
     stopper = None
     if eval_every_ts > 0:
-        stopper = EarlyStopping(patience=5, min_delta=0.02, verbose=True, save_best=True, best_path=cfg["save_path"])
+        stopper = EarlyStopping(patience=5, min_delta=0.02, verbose=True, save_best=True, best_path="saved_models/pro_model.zip")
     else:
         stopper = None
         print("[early-stop] Disabled (eval_every_timesteps=0)")
@@ -113,9 +113,7 @@ def train_model(model: PPO, cfg: dict) -> int:
 
         # Trigger periodic eval once the next threshold is reached
         if next_eval_ts is not None and trained >= next_eval_ts:
-            success_rate = online_eval_and_log(
-                model, cfg, trained_ts=trained, iter_idx=iterations
-            )
+            success_rate = online_eval_and_log(model, cfg, trained_ts=trained, iter_idx=iterations)
             if stopper and stopper(success_rate, model):
                 best = stopper.best()
                 best_str = f"{best:.2%}" if best is not None else "n/a"
@@ -151,10 +149,6 @@ def main() -> None:
     # Load and validate configuration; print a short summary
     cfg = load_pro_config(config_path)
     print_summary(SimpleNamespace(**cfg))
-
-    if cfg.get("dry_run", False):
-        print("Dry run requested; exiting before training.")
-        return
 
     if not cfg.get("train_then_eval", True):
         print("train_then_eval disabled; exiting without training.")

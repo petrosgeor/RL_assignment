@@ -2,7 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import yaml
 from stable_baselines3 import DQN
-
+import torch
 import sys
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -26,7 +26,7 @@ def load_dqn_config(path: str) -> dict:
 
 def build_model(cfg: dict, env) -> DQN:
     # Force CPU usage regardless of config or CUDA availability
-    device = "cpu"
+    device = "cuda" if torch.cuda.is_available() else 'cpu'
     return DQN(
         policy=cfg["policy"],
         env=env,
@@ -58,7 +58,10 @@ def train_model(model: DQN, cfg: dict) -> int:
     iterations = 0
     next_eval_ts = eval_every_ts if eval_every_ts > 0 else None
 
-    stopper = EarlyStopping(patience=5, min_delta=0.02, verbose=True, save_best=True, best_path=Path(cfg["save_path"])) if eval_every_ts > 0 else None
+    if eval_every_ts > 0: 
+        stopper = EarlyStopping(patience=20, min_delta=0.02, verbose=True, save_best=True, best_path="saved_models/dqn_model.zip")
+    else:
+        stopper = None
     if stopper is None:
         print("[early-stop] Disabled (eval_every_timesteps=0)")
 
@@ -90,9 +93,6 @@ def main() -> None:
     cfg = load_dqn_config(default_cfg)
     print_summary(SimpleNamespace(**cfg))
 
-    if cfg.get("dry_run", False):
-        print("Dry run requested; exiting before training.")
-        return
     if not cfg.get("train_then_eval", True):
         print("train_then_eval disabled; exiting without training.")
         return
