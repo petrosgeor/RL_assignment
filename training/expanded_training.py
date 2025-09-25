@@ -1,37 +1,24 @@
 from pathlib import Path
 from types import SimpleNamespace
 import sys
-from typing import Callable, Optional
 
 import yaml
-import numpy as np
 import gymnasium as gym
 from gymnasium.wrappers import TimeLimit
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecEnv
-
+import torch
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from environment import load_grid_config
-from expanded_environment import (
-    create_env_from_config as create_expanded_env,
-)
-from training.utils import to_scalar_action
+from expanded_environment import create_env_from_config as create_expanded_env
 from training.early_stopping import EarlyStopping
+from training.training_evaluation import evaluate_model_expanded
 
 
 def load_config(path: str | Path) -> dict:
-    """Loads a YAML configuration file into a dictionary.
-
-    Args:
-        path (str | Path): Location of the training configuration YAML file.
-
-    Returns:
-        dict: Parsed configuration values.
-    """
-
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     if raw is None:
         raise ValueError(f"Configuration file {path} is empty")
@@ -40,11 +27,10 @@ def load_config(path: str | Path) -> dict:
 
 def make_expanded_env_factory(
     env_config,
-    *,
     flatten: bool,
-    max_steps: Optional[int],
+    max_steps: int,
     seed: int,
-) -> Callable[[], gym.Env]:
+) -> gym.Env:
     """Constructs a factory that yields ExpandedGridEnv wrapped as requested.
 
     Args:
@@ -54,7 +40,7 @@ def make_expanded_env_factory(
         seed (int): Base seed for environment and action space seeding.
 
     Returns:
-        Callable[[], gym.Env]: A thunk that creates a freshly wrapped env instance.
+         gym.Env: A thunk that creates a freshly wrapped env instance.
     """
 
     def _init() -> gym.Env:
@@ -74,8 +60,7 @@ def build_vec_env_expanded(config, env_config) -> VecEnv:
     """Creates a vectorized ExpandedGridEnv for PPO rollouts.
 
     Args:
-        config: Namespace or mapping exposing n_envs, use_flatten_wrapper,
-            max_episode_steps, seed.
+        config: Namespace or mapping exposing n_envs, use_flatten_wrapper,max_episode_steps, seed.
         env_config: Validated GridConfig for instantiating ExpandedGridEnv.
 
     Returns:
@@ -98,32 +83,6 @@ def build_vec_env_expanded(config, env_config) -> VecEnv:
     ]
     return DummyVecEnv(env_fns)
 
-
-def build_single_env_expanded(config, env_config) -> gym.Env:
-    """Creates a single ExpandedGridEnv for evaluation.
-
-    Args:
-        config: Namespace or mapping exposing use_flatten_wrapper,
-            max_episode_steps, seed or eval_seed.
-        env_config: Validated GridConfig for instantiating ExpandedGridEnv.
-
-    Returns:
-        gym.Env: Wrapped ExpandedGridEnv instance.
-    """
-
-    flatten = bool(getattr(config, "use_flatten_wrapper", False))
-    max_steps = getattr(config, "max_episode_steps", None)
-    eval_seed = getattr(config, "eval_seed", None)
-    base_seed = int(getattr(config, "seed", 0))
-    seed = int(eval_seed) if eval_seed is not None else base_seed
-
-    env_fn = make_expanded_env_factory(
-        env_config,
-        flatten=flatten,
-        max_steps=max_steps,
-        seed=seed,
-    )
-    return env_fn()
 
 
 def build_model_ppo(cfg: dict, env: VecEnv) -> PPO:
@@ -158,69 +117,7 @@ def build_model_ppo(cfg: dict, env: VecEnv) -> PPO:
     )
 
 
-def evaluate_model_expanded(model, cfg: dict) -> dict:
-    """Runs evaluation episodes on ExpandedGridEnv and reports metrics.
-
-    Args:
-        model: SB3 PPO or DQN model implementing predict.
-        cfg (dict): Configuration with eval_episodes, eval_seed, seed,
-            deterministic_eval, env_config_path, use_flatten_wrapper,
-            max_episode_steps.
-
-    Returns:
-        dict: Summary with episodes, average_return, average_length,
-        success_rate, and average_bonuses_visited across episodes.
-    """
-
-    episodes = int(cfg.get("eval_episodes", 100))
-    grid_cfg = load_grid_config(cfg["env_config_path"])
-    eval_ns = SimpleNamespace(**cfg)
-    env = build_single_env_expanded(eval_ns, grid_cfg)
-
-    returns: list[float] = []
-    lengths: list[int] = []
-    successes: list[bool] = []
-    visited_counts: list[int] = []
-
-    try:
-        for episode in range(episodes):
-            base_seed = cfg.get("eval_seed") or (cfg["seed"] + 999)
-            obs, _ = env.reset(seed=int(base_seed) + episode)
-            terminated = False
-            truncated = False
-            total_reward = 0.0
-            steps = 0
-            last_info = {}
-
-            while not (terminated or truncated):
-                action, _ = model.predict(
-                    obs, deterministic=bool(cfg.get("deterministic_eval", True))
-                )
-                action = to_scalar_action(action)
-                obs, reward, terminated, truncated, info = env.step(action)
-                total_reward += float(reward)
-                steps += 1
-                if info:
-                    last_info = info
-
-            returns.append(total_reward)
-            lengths.append(steps)
-            successes.append(last_info.get("reason") == "goal")
-            visited_counts.append(int(last_info.get("visited", 0)))
-    finally:
-        env.close()
-
-    avg_return = float(np.mean(returns)) if returns else 0.0
-    avg_length = float(np.mean(lengths)) if lengths else 0.0
-    success_rate = float(np.mean(successes)) if successes else 0.0
-    avg_visited = float(np.mean(visited_counts)) if visited_counts else 0.0
-    return {
-        "episodes": float(len(returns)),
-        "average_return": avg_return,
-        "average_length": avg_length,
-        "success_rate": success_rate,
-        "average_bonuses_visited": avg_visited,
-    }
+    
 
 
 def online_eval_and_log_expanded(model, cfg: dict, trained_ts: int, iter_idx: int) -> float:
@@ -278,7 +175,7 @@ def train_model_ppo(model: PPO, cfg: dict) -> int:
     stopper = None
     if eval_every_ts > 0:
         stopper = EarlyStopping(
-            patience=5,
+            patience=10,
             min_delta=0.02,
             verbose=True,
             save_best=True,
@@ -313,27 +210,15 @@ def train_model_ppo(model: PPO, cfg: dict) -> int:
 
 
 def main() -> None:
-    """Train PPO on ExpandedGridEnv and print final evaluation metrics.
+    cfg_path = REPO_ROOT / "training_configurations" / "ppo_config.yaml"
 
-    Args:
-        None
-
-    Returns:
-        None
-    """
-
-    # Resolve PPO configuration
-    cfg_path = REPO_ROOT / "training_configurations" / "pro_config.yaml"
-
-    # Load algorithm config and environment grid config
     cfg = load_config(cfg_path)
-    grid_cfg = load_grid_config(cfg["env_config_path"])  # same grid YAML
+    grid_cfg = load_grid_config(cfg["env_config_path"]) 
 
-    # Construct vectorized env and PPO model, then train with early stopping
     train_env = build_vec_env_expanded(SimpleNamespace(**cfg), grid_cfg)
     try:
         model = build_model_ppo(cfg, train_env)
-        _ = train_model_ppo(model, cfg)
+        iterations = train_model_ppo(model, cfg)
     finally:
         train_env.close()
 

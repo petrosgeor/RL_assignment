@@ -1,13 +1,3 @@
-"""Grid world variant with first-visit bonuses.
-
-Adds a 4th observation layer for remaining bonuses and pays a small reward
-only the first time a bonus cell is visited. Termination rules are unchanged.
-"""
-
-from __future__ import annotations
-
-from typing import Sequence
-
 import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
@@ -91,28 +81,30 @@ class ExpandedGridEnv(gym.Env):
             dtype=np.float32,
         )
 
-        self.agent_position: Coordinate = (0, 0)
-        self.goal_position: Coordinate = (rows - 1, cols - 1)
-        self.obstacle_positions: set[Coordinate] = set()
-        self.bonus_positions: set[Coordinate] = set()
-        self.visited_bonus: set[Coordinate] = set()
-        self.np_random: np.random.Generator | None = None
+        self.agent_position = (0, 0)
+        self.goal_position = (rows - 1, cols - 1)
+        self.obstacle_positions = set()
+        self.bonus_positions = set()
+        self.visited_bonus = set()
+        self.np_random = None
 
     # ------------------------------------------------------------------
     # Gym API
     # ------------------------------------------------------------------
-    def reset(self, *, seed=None, options=None) -> tuple:
+    def reset(self, seed=None, options=None) -> tuple:
         """Sample a fresh episode layout (including bonuses) and reset state."""
 
         super().reset(seed=seed)
         assert self.np_random is not None  # set by super().reset
         overrides = options or {}
+        # If caller provided explicit coordinates in options, apply them; otherwise sample
 
         if overrides:
             self._apply_overrides(overrides)
         else:
             self._sample_episode_layout()
 
+        # Clear first-visit bookkeeping for a new episode
         self.visited_bonus = set()
         observation = self._build_observation()
         info = {"reason": "reset", "bonuses_remaining": NUM_BONUS}
@@ -124,6 +116,7 @@ class ExpandedGridEnv(gym.Env):
         if not self.action_space.contains(action):
             raise ValueError(f"Action {action!r} is outside the valid range 0-3")
 
+        # Translate action into grid motion
         row_delta, col_delta = ACTION_TO_DELTA[action]
         candidate = (self.agent_position[0] + row_delta, self.agent_position[1] + col_delta)
 
@@ -223,10 +216,14 @@ class ExpandedGridEnv(gym.Env):
 
         assert self.np_random is not None
         total_cells = self.rows * self.cols
+        # We need positions for: agent, goal, obstacles, and bonuses
         required = self.num_obstacles + 2 + NUM_BONUS
+        # Sample distinct flat indices in [0, rows*cols) then take the first required
         indices = self.np_random.permutation(total_cells)[:required]
+        # Map each flat index k to 2D coordinates (k // cols, k % cols)
         coordinates = [divmod(int(idx), self.cols) for idx in indices]
 
+        # Assign sampled positions by convention: [agent, goal, obstacles..., bonuses...]
         self.agent_position = coordinates[0]
         self.goal_position = coordinates[1]
         self.obstacle_positions = set(coordinates[2 : 2 + self.num_obstacles])
@@ -236,9 +233,12 @@ class ExpandedGridEnv(gym.Env):
         """Sample NUM_BONUS cells avoiding agent, goal, and obstacles."""
 
         assert self.np_random is not None
+        # Exclude existing occupied cells so bonuses don't overlap agent/goal/obstacles
         forbidden = {self.agent_position, self.goal_position} | self.obstacle_positions
+        # Enumerate all grid cells and filter forbidden ones
         all_cells = [(r, c) for r in range(self.rows) for c in range(self.cols)]
         candidates = [cell for cell in all_cells if cell not in forbidden]
+        # Randomly permute candidate indices and pick the first NUM_BONUS
         perm = self.np_random.permutation(len(candidates))
         chosen = [candidates[int(i)] for i in perm[:NUM_BONUS]]
         self.bonus_positions = set(chosen)
@@ -246,6 +246,7 @@ class ExpandedGridEnv(gym.Env):
     def _build_observation(self) -> np.ndarray:
         """Build a 4‑layer observation: agent, goal, obstacles, remaining bonuses."""
 
+        # Start with all‑zero layers and mark active cells as 1.0
         observation = np.zeros(self.observation_space.shape, dtype=np.float32)
         a_row, a_col = self.agent_position
         g_row, g_col = self.goal_position

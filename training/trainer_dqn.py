@@ -1,15 +1,16 @@
+import argparse
 from pathlib import Path
+import sys
 from types import SimpleNamespace
 import yaml
 from stable_baselines3 import DQN
 import torch
-import sys
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from training.utils import build_env, print_summary
+from training.utils import build_env, print_summary, save_model
 
 from training.training_evaluation import evaluate_model, online_eval_and_log
 from training.early_stopping import EarlyStopping
@@ -25,7 +26,6 @@ def load_dqn_config(path: str) -> dict:
 
 
 def build_model(cfg: dict, env) -> DQN:
-    # Force CPU usage regardless of config or CUDA availability
     device = "cuda" if torch.cuda.is_available() else 'cpu'
     return DQN(
         policy=cfg["policy"],
@@ -49,7 +49,7 @@ def build_model(cfg: dict, env) -> DQN:
     )
 
 
-def train_model(model: DQN, cfg: dict) -> int:
+def train_model(model: DQN, cfg: dict, best_path: Path) -> int:
     total_timesteps = int(cfg["total_timesteps"])
     eval_every_ts = int(cfg.get("eval_every_timesteps", 0) or 0)
     chunk = eval_every_ts if eval_every_ts > 0 else 5000
@@ -58,8 +58,14 @@ def train_model(model: DQN, cfg: dict) -> int:
     iterations = 0
     next_eval_ts = eval_every_ts if eval_every_ts > 0 else None
 
-    if eval_every_ts > 0: 
-        stopper = EarlyStopping(patience=20, min_delta=0.02, verbose=True, save_best=True, best_path="saved_models/dqn_model.zip")
+    if eval_every_ts > 0:
+        stopper = EarlyStopping(
+            patience=10,
+            min_delta=0.02,
+            verbose=True,
+            save_best=True,
+            best_path=best_path,
+        )
     else:
         stopper = None
     if stopper is None:
@@ -88,21 +94,39 @@ def train_model(model: DQN, cfg: dict) -> int:
 
 def main() -> None:
 
-    default_cfg = REPO_ROOT / "training_configurations" / "dqn_config.yaml"
+    parser = argparse.ArgumentParser(description="Train DQN on GridEnv")
 
-    cfg = load_dqn_config(default_cfg)
+    parser.add_argument(
+        "--reward",
+        choices=("base", "combined"),
+        default="base",
+        help="Reward type: base or combined (with potential shaping)",
+    )
+    args = parser.parse_args()
+
+    cfg_path = REPO_ROOT / "training_configurations" / "dqn_config.yaml"
+
+    cfg = load_dqn_config(cfg_path)
+    cfg["reward_mode"] = args.reward
     print_summary(SimpleNamespace(**cfg))
+
+    use_combined = args.reward == "combined"
+    save_path = REPO_ROOT / "saved_models" / f"dqn_model_{args.reward}.zip"
+    cfg["save_path"] = str(save_path)
 
     if not cfg.get("train_then_eval", True):
         print("train_then_eval disabled; exiting without training.")
         return
 
     env = build_env(SimpleNamespace(**cfg), vec=False)
+    env.unwrapped.set_use_combined_rewards(use_combined)
     try:
         model = build_model(cfg, env)
-        iterations = train_model(model, cfg)
+        iterations = train_model(model, cfg, save_path)
     finally:
         env.close()
+
+    save_model(model, save_path)
 
     # Final evaluation and summary printout
     metrics = evaluate_model(model, cfg)

@@ -1,15 +1,13 @@
 seed: 123
 
-total_timesteps: 10000000
+total_timesteps: 1000000
 
 env_config_path: training_configurations/env_config.yaml
 n_envs: 1   # set to 1 for dqn to keep training straightforward
 use_flatten_wrapper: true
 max_episode_steps: 100  # set to null for infinite
 
-train_then_eval: true
-
-eval_every_timesteps: 30000
+eval_every_timesteps: 10000
 online_eval_episodes: 100
 eval_episodes: 100    # Run eval_episodes in a fixed environment
 eval_seed: 9999
@@ -21,13 +19,13 @@ policy_kwargs:
 
 # DQN hyperparameters
 learning_rate: 0.0001          # Optimizer step size for the Q-network (higher = larger updates)
-buffer_size: 100000           # Replay buffer capacity (number of transitions stored)
-learning_starts: 1000         # Env steps to collect before learning begins (warm-up)
-batch_size: 128               # Minibatch size sampled from the replay buffer per update
+buffer_size: 200000           # Replay buffer capacity (number of transitions stored)
+learning_starts: 10000         # Env steps to collect before learning begins (warm-up)
+batch_size: 256               # Minibatch size sampled from the replay buffer per update
 gamma: 0.99                   # Discount factor for future rewards
-train_freq: 3                 # Env steps between training phases (frequency of updates)
-gradient_steps: 2             # Number of gradient updates executed at each training phase. Each gradient step is calculated using batch_size samples
-target_update_interval: 512  # Env steps between copies online -> target network (stability vs. freshness)
-exploration_fraction: 0.1     # Fraction of total timesteps to anneal epsilon from 1.0 to final value
+train_freq: 1                 # Env steps between training phases (frequency of updates)
+gradient_steps: 1             # Number of gradient updates executed at each training phase. Each gradient step is calculated using batch_size samples
+target_update_interval: 1024  # Env steps between copies online -> target network (stability vs. freshness)
+exploration_fraction: 0.4     # Fraction of total timesteps to anneal epsilon from 1.0 to final value
 exploration_final_eps: 0.02   # Final epsilon (minimum random action probability) after annealing
 max_grad_norm: 10.0           # Max L2-norm for gradient clipping to prevent exploding updates

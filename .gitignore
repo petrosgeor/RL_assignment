@@ -7,3 +7,4 @@
 *.sh
 __pycache__/
 tests/*
+overview/*

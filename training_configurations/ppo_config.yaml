@@ -1,13 +1,15 @@
 seed: 123
 
-total_timesteps: 1000000
+total_timesteps: 10000000
+
+
 
 env_config_path: training_configurations/env_config.yaml
+
 n_envs: 4
 use_flatten_wrapper: true
 max_episode_steps: 100        # Set to null for infinite horizon
 
-train_then_eval: true
 eval_every_timesteps: 32768
 online_eval_episodes: 100
 

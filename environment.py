@@ -8,10 +8,12 @@ import numpy as np
 import yaml
 from gymnasium import spaces
 from collections import deque
+import numpy as np
 
-# --- Potential-based shaping hyperparameters (simple and explicit) ---
-ALPHA_POT: float = 0.25   # scale of shaping signal
-GAMMA_POT: float = 0.99   # align with agent discount (defaults use 0.99)
+
+# Potential-shaping coefficients (used when combined rewards are enabled)
+ALPHA_POT: float = 0.4   # scale for geodesic shaping
+GAMMA_POT: float = 1     # potential discount (1 = pure change)
 
 Action = int
 Coordinate = tuple[int, int]
@@ -43,7 +45,6 @@ class GridConfig:
     grid_rows: int
     grid_cols: int
     num_obstacles: int
-    use_combined_rewards: bool = False  # when true, add potential-based shaping
 
     def validate(self) -> None:
         if self.grid_rows < 2 or self.grid_cols < 2:
@@ -68,14 +69,14 @@ def load_grid_config(path= "training_configurations/env_config.yaml",) -> GridCo
     """
 
     cfg_path = Path(path)
-
+    # Read YAML configuration from disk
     with cfg_path.open("r", encoding="utf-8") as handle:
         raw = yaml.safe_load(handle)
+    # Construct dataclass and validate bounds/constraints
     config = GridConfig(
         grid_rows=int(raw["grid_rows"]),
         grid_cols=int(raw["grid_cols"]),
         num_obstacles=int(raw["num_obstacles"]),
-        use_combined_rewards=bool(raw.get("use_combined_rewards", False)),
     )
     config.validate()
     return config
@@ -116,6 +117,7 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
         """
 
         super().__init__()
+        # Validate dimensions and obstacle budget
         if rows < 2 or cols < 2:
             raise ValueError("rows and cols must both be >= 2")
         max_obstacles = rows * cols - 2
@@ -129,7 +131,9 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
         self.cols = cols
         self.num_obstacles = num_obstacles
 
+        # Discrete 4-action space (up, down, left, right)
         self.action_space = spaces.Discrete(len(ACTION_TO_DELTA))
+        # Observation has 3 binary layers: agent, goal, obstacles
         self.observation_space = spaces.Box(
             low=0.0,
             high=1.0,
@@ -141,7 +145,14 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
         self.goal_position: Coordinate = (rows - 1, cols - 1)
         self.obstacle_positions: set[Coordinate] = set()
         self.np_random: np.random.Generator | None = None
+        # Geodesic distance map cache (computed at reset)
         self._dist_map = None  # filled at reset when shaping is enabled
+        self.use_combined_rewards = False
+
+    def set_use_combined_rewards(self, flag: bool) -> None:
+        """Enable or disable potential-based shaping."""
+
+        self.use_combined_rewards = bool(flag)
 
     def reset(
         self,
@@ -165,6 +176,7 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
         assert self.np_random is not None  # set by super().reset
         overrides = options or {}
 
+        # Either apply explicit layout or sample a fresh one
         if overrides:
             self._apply_overrides(overrides)
         else:
@@ -188,20 +200,23 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
             reward signal, episode termination flag, truncation flag, and auxiliary info.
         """
 
+        # Validate action index
         if not self.action_space.contains(action):
             raise ValueError(f"Action {action!r} is outside the valid range 0-3")
 
+        # Translate discrete action to row/col delta
         row_delta, col_delta = ACTION_TO_DELTA[action]  # Map the action
         curr = self.agent_position
         candidate = (curr[0] + row_delta, curr[1] + col_delta)  # next position
 
-
-        # Initialization 
+        # Initialize termination flags and base reward
+        # (base reward is step-penalty unless terminal events occur)
         terminated = False
         truncated = False
         reward = -1.0
         reason = "moved"
 
+        # Resolve transition outcome in priority order
         if not self._is_within_bounds(candidate):
             terminated = True
             reward = -10.0
@@ -211,17 +226,20 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
             reward = -10.0
             reason = "collision"
         elif candidate == self.goal_position:
+            # Goal reached: move agent and end episode with goal reward
             self.agent_position = candidate
             terminated = True
             reward = 10.0
             reason = "goal"
         else:
+            # Regular move: update position only
             self.agent_position = candidate
 
         # Add potential-based shaping only if enabled via config/flag
         if getattr(self, "use_combined_rewards", False):
             reward += self._potential_bonus_geodesic(curr, candidate, reason)
 
+        # Build next observation and attach minimal info for diagnostics
         observation = self._build_observation()
         info = {
             "reason": reason,
@@ -241,6 +259,7 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
             str: Rendered grid when mode == ansi; otherwise None.
         """
 
+        # Create an ASCII grid and mark obstacles, goal, and agent
         grid = [["." for _ in range(self.cols)] for _ in range(self.rows)]
         for row, col in self.obstacle_positions:
             grid[row][col] = "#"
@@ -251,9 +270,11 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
 
         output = "\n".join("".join(row) for row in grid)
         if mode == "human":
+            # Print to stdout for an immediate visualisation
             print(output)
             return None
         if mode == "ansi":
+            # Return string for programmatic or file-based consumption
             return output
         raise ValueError("Unsupported render mode. Use 'human' or 'ansi'.")
 
@@ -278,6 +299,7 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
             obstacle_positions: [(1, 1), (2, 3), (4, 4)]
         """
 
+        # Pull expected keys from options
         agent = overrides.get("agent_position")
         goal = overrides.get("goal_position")
         obstacles = overrides.get("obstacle_positions")
@@ -287,10 +309,12 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
                 "overrides must include agent_position, goal_position, and obstacle_positions"
             )
 
+        # Validate and normalize all coordinates
         agent_coord = self._validate_coordinate(agent)
         goal_coord = self._validate_coordinate(goal)
         obstacle_coords = {self._validate_coordinate(obs) for obs in obstacles}
 
+        # Enforce mutual exclusivity and obstacle count
         if agent_coord == goal_coord:
             raise ValueError("Agent and goal positions must be distinct")
         if agent_coord in obstacle_coords or goal_coord in obstacle_coords:
@@ -317,7 +341,9 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
         assert self.np_random is not None  # ensure RNG is ready (set in reset)
         total_cells = self.rows * self.cols  # total number of cells in the grid
         required = self.num_obstacles + 2  # sample agent + goal + all obstacles
+        # Draw a random permutation and take the first 'required' unique cells
         indices = self.np_random.permutation(total_cells)[:required]  # unique cells
+        # Convert flat cell index k into (row, col) via divmod(k, cols)
         coordinates = [divmod(index, self.cols) for index in indices]  # to (row, col)
 
         self.agent_position = coordinates[0]  # first cell becomes agent start
@@ -336,6 +362,7 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
         The first layer shows where the agent is. The second the goal position and the third one the obstacle positions 
         """
 
+        # Start with zeroed layers and set ones at active positions
         observation = np.zeros(self.observation_space.shape, dtype=np.float32)
         agent_row, agent_col = self.agent_position
         goal_row, goal_col = self.goal_position
@@ -355,16 +382,20 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
 
         rows, cols = self.rows, self.cols
         D_MAX = rows + cols
+        # Initialize all distances to D_MAX (mark unreachable by default)
         dist = np.full((rows, cols), D_MAX, dtype=np.int32)
 
+        # Precompute obstacle mask for fast checks
         blocked = np.zeros((rows, cols), dtype=bool)
         for (r, c) in self.obstacle_positions:
             blocked[r, c] = True
 
         gr, gc = self.goal_position
         if not (0 <= gr < rows and 0 <= gc < cols) or blocked[gr, gc]:
+            # If goal is invalid or blocked, no cell can reach it
             return dist
 
+        # BFS from the goal to compute 4-connected shortest-path distances
         dist[gr, gc] = 0
         q = deque([(gr, gc)])
         while q:
@@ -379,22 +410,28 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
         return dist
 
     def _potential_bonus_geodesic(self, curr: Coordinate, nxt: Coordinate, reason: str) -> float:
-        """Geodesic (obstacle-aware) potential shaping based on precomputed BFS.
+        """Concave geodesic shaping using phi(d)=log(1+d).
 
-        r_pot = ALPHA_POT * (d_sp(s) - GAMMA_POT * d_sp(s')), suppressed on
-        invalid terminations and when distances are marked unreachable.
+        Returns ALPHA_POT * (phi(d_curr) - GAMMA_POT * phi(d_next)) where d are
+        BFS geodesic distances to the goal. Shaping is suppressed on invalid
+        terminations and when distances are unreachable.
         """
 
+        # Do not shape invalid terminations
         if reason in ("collision", "out_of_bounds"):
             return 0.0
+        # If no distance map is available, skip shaping
         if self._dist_map is None:
             return 0.0
         D_MAX = self.rows + self.cols
         d_curr = int(self._dist_map[curr[0], curr[1]])
         d_next = int(self._dist_map[nxt[0], nxt[1]])
+        # Skip cells that are unreachable from the goal
         if d_curr >= D_MAX or d_next >= D_MAX:
             return 0.0
-        return ALPHA_POT * (d_curr - GAMMA_POT * d_next)
+        phi_curr = float(np.log1p(d_curr))
+        phi_next = float(np.log1p(d_next))
+        return ALPHA_POT * (phi_curr - GAMMA_POT * phi_next)
 
     def _is_within_bounds(self, coordinate: Coordinate) -> bool:
         """Determines whether a coordinate lies inside the configured grid.
@@ -419,6 +456,7 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
             Coordinate: Tuple containing the sanitized coordinate values.
         """
 
+        # Enforce two components and cast to ints
         if len(value) != 2:
             raise ValueError("Coordinates must contain exactly two integers")
         row, col = int(value[0]), int(value[1])
@@ -440,6 +478,4 @@ def create_env_from_config(config: GridConfig) -> GridEnv:
     """
 
     env = GridEnv(config.grid_rows, config.grid_cols, config.num_obstacles)
-    # Propagate reward-combination flag to the environment instance
-    setattr(env, "use_combined_rewards", bool(getattr(config, "use_combined_rewards", False)))
     return env
