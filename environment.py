@@ -381,7 +381,7 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
         """
 
         rows, cols = self.rows, self.cols
-        D_MAX = rows + cols
+        D_MAX = rows * cols + 1
         # Initialize all distances to D_MAX (mark unreachable by default)
         dist = np.full((rows, cols), D_MAX, dtype=np.int32)
 
@@ -423,7 +423,7 @@ class GridEnv(gym.Env[Coordinate, np.ndarray]):
         # If no distance map is available, skip shaping
         if self._dist_map is None:
             return 0.0
-        D_MAX = self.rows + self.cols
+        D_MAX = self.rows * self.cols + 1
         d_curr = int(self._dist_map[curr[0], curr[1]])
         d_next = int(self._dist_map[nxt[0], nxt[1]])
         # Skip cells that are unreachable from the goal

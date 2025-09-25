@@ -5,7 +5,7 @@ from gymnasium.wrappers import TimeLimit
 
 from training.utils import build_env, to_scalar_action
 from environment import load_grid_config
-from expanded_environment import reate_env_from_config as create_expanded_env
+from expanded_environment import create_env_from_config as create_expanded_env
 
 
 def evaluate_model(model, cfg: dict) -> dict:
