@@ -71,6 +71,14 @@ python evaluation/evaluation.py --model dqn --env base --reward combined
 # Expanded environment (PPO only)
 python evaluation/evaluation.py --model ppo --env expanded
 ```
+To average results across multiple independently sampled environment setups, add the flag --num_setups N (each setup runs eval_episodes episodes and metrics are averaged across setups):
+```bash
+# Example: evaluate PPO on 50 different base layouts
+python evaluation/evaluation.py --model ppo --env base --reward base --num_setups 50
+
+# Example: evaluate PPO on 20 different expanded layouts
+python evaluation/evaluation.py --model ppo --env expanded --num_setups 20
+```
 Outputs include average_return, average_length, and success_rate (expanded also reports average_bonuses_visited).
 
 Expected checkpoints:
@@ -171,4 +179,3 @@ Prerequisites
     --entrypoint bash \
     rl-assignment
   ```
-

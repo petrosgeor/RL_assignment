@@ -25,6 +25,8 @@ def load_config(path: str | Path) -> dict:
 
 
 def evaluate_model_base(model, cfg: dict) -> dict:
+    """Evaluates a model on the base GridEnv and returns summary metrics"""
+
     episodes = int(cfg.get("eval_episodes", 100))
     # Build an evaluation environment without any seeding so layouts are random
     env_cfg_path = REPO_ROOT / cfg.get("env_config_path", "training_configurations/env_config.yaml")
@@ -72,7 +74,7 @@ def evaluate_model_base(model, cfg: dict) -> dict:
         env.close()
 
     avg_return = float(np.mean(returns))
-    avg_length = float(np.mean(lengths))
+    avg_length = float(np.mean(lengths)) 
     success_rate = float(np.mean(successes))
 
     return {
@@ -84,6 +86,8 @@ def evaluate_model_base(model, cfg: dict) -> dict:
 
 
 def evaluate_model_expanded(model, cfg: dict) -> dict:
+    """Evaluates a model on ExpandedGridEnv and returns summary metrics"""
+
     episodes = int(cfg.get("eval_episodes", 100))
 
     
@@ -126,7 +130,7 @@ def evaluate_model_expanded(model, cfg: dict) -> dict:
         env.close()
 
     avg_return = float(np.mean(returns))
-    avg_length = float(np.mean(lengths))
+    avg_length = float(np.mean(lengths)) if lengths else 0.0
     success_rate = float(np.mean(successes))
     avg_visited = float(np.mean(visited_counts))
 
@@ -137,6 +141,51 @@ def evaluate_model_expanded(model, cfg: dict) -> dict:
         "success_rate": success_rate,
         "average_bonuses_visited": avg_visited,
     }
+
+
+def _aggregate_over_setups(
+    evaluate_once, model, cfg: dict, num_setups: int) -> dict:
+    """Repeats evaluation across multiple environment setups and aggregates.
+
+    Args:
+        evaluate_once (callable): Function taking (model, cfg) and returning
+            a metrics dict for a single evaluation run.
+        model: Trained model to evaluate.
+        cfg (dict): Evaluation configuration passed to evaluate_once.
+        num_setups (int): Number of independent environment setups to sample.
+
+    Returns:
+        dict: Aggregated metrics across setups including setups,
+        episodes_per_setup, average_return, average_length, success_rate,
+        and average_bonuses_visited when available.
+    """
+
+    n = max(int(num_setups), 1)
+    returns = []
+    lengths = []
+    successes = []
+    visited = []
+
+    episodes_per_setup = None
+    for _ in range(n):
+        m = evaluate_once(model, cfg)
+        episodes_per_setup = episodes_per_setup or int(m.get("episodes", 0))
+        returns.append(float(m["average_return"]))
+        lengths.append(float(m["average_length"]))
+        successes.append(float(m["success_rate"]))
+        if "average_bonuses_visited" in m:
+            visited.append(float(m["average_bonuses_visited"]))
+
+    out = {
+        "setups": float(n),
+        "episodes_per_setup": float(episodes_per_setup or 0),
+        "average_return": float(np.mean(returns)) if returns else 0.0,
+        "average_length": float(np.mean(lengths)) if lengths else 0.0,
+        "success_rate": float(np.mean(successes)) if successes else 0.0,
+    }
+    if visited:
+        out["average_bonuses_visited"] = float(np.mean(visited))
+    return out
 
 
 def main() -> None:
@@ -159,6 +208,16 @@ def main() -> None:
         default="base",
         help="Reward mode for base GridEnv checkpoints",
     )
+    parser.add_argument(
+        "--num_setups",
+        type=int,
+        default=1,
+        help=(
+            "Number of independent environment setups to sample. "
+            "Each setup runs eval_episodes episodes; results are averaged across setups."
+        ),
+    )
+    
     args = parser.parse_args()
 
     # Expanded environment only supports PPO agents.
@@ -196,28 +255,55 @@ def main() -> None:
     model = loader.load(str(model_path), device="cpu")
 
     if args.env == "base":
-        metrics = evaluate_model_base(model, cfg)
-        print(
-            "Standalone evaluation complete | episodes: {episodes:.0f} | avg return: {ret:.2f} | "
-            "avg length: {length:.2f} | success rate: {success:.2%}".format(
-                episodes=metrics["episodes"],
-                ret=metrics["average_return"],
-                length=metrics["average_length"],
-                success=metrics["success_rate"],
+        if int(args.num_setups) <= 1:
+            metrics = evaluate_model_base(model, cfg)
+            print(
+                "Standalone evaluation complete | episodes: {episodes:.0f} | avg return: {ret:.2f} | "
+                "avg length: {length:.2f} | success rate: {success:.2%}".format(
+                    episodes=metrics["episodes"],
+                    ret=metrics["average_return"],
+                    length=metrics["average_length"],
+                    success=metrics["success_rate"],
+                )
             )
-        )
+        else:
+            agg = _aggregate_over_setups(evaluate_model_base, model, cfg, args.num_setups)
+            print(
+                "Multi-setup evaluation complete | setups: {ns:.0f} | episodes/setup: {eps:.0f} | "
+                "avg return: {ret:.2f} | avg length: {length:.2f} | success rate: {succ:.2%}".format(
+                    ns=agg["setups"],
+                    eps=agg["episodes_per_setup"],
+                    ret=agg["average_return"],
+                    length=agg["average_length"],
+                    succ=agg["success_rate"],
+                )
+            )
     else:
-        metrics = evaluate_model_expanded(model, cfg)
-        print(
-            "Standalone evaluation complete | episodes: {episodes:.0f} | avg return: {ret:.2f} | "
-            "avg length: {length:.2f} | success rate: {success:.2%} | avg visited: {vis:.2f}".format(
-                episodes=metrics["episodes"],
-                ret=metrics["average_return"],
-                length=metrics["average_length"],
-                success=metrics["success_rate"],
-                vis=metrics["average_bonuses_visited"],
+        if int(args.num_setups) <= 1:
+            metrics = evaluate_model_expanded(model, cfg)
+            print(
+                "Standalone evaluation complete | episodes: {episodes:.0f} | avg return: {ret:.2f} | "
+                "avg length: {length:.2f} | success rate: {success:.2%} | avg visited: {vis:.2f}".format(
+                    episodes=metrics["episodes"],
+                    ret=metrics["average_return"],
+                    length=metrics["average_length"],
+                    success=metrics["success_rate"],
+                    vis=metrics["average_bonuses_visited"],
+                )
             )
-        )
+        else:
+            agg = _aggregate_over_setups(evaluate_model_expanded, model, cfg, args.num_setups)
+            print(
+                "Multi-setup evaluation complete | setups: {ns:.0f} | episodes/setup: {eps:.0f} | "
+                "avg return: {ret:.2f} | avg length: {length:.2f} | success rate: {succ:.2%} | avg visited: {vis:.2f}".format(
+                    ns=agg["setups"],
+                    eps=agg["episodes_per_setup"],
+                    ret=agg["average_return"],
+                    length=agg["average_length"],
+                    succ=agg["success_rate"],
+                    vis=agg.get("average_bonuses_visited", 0.0),
+                )
+            )
 
 
 if __name__ == "__main__":
