@@ -10,6 +10,7 @@ Train PPO (on‑policy) and DQN (off‑policy) agents on a custom grid‑world G
 - Evaluation
 - Observe a Single Episode
 - Configuration Reference
+- Docker
 
 
 ## Getting Started
@@ -58,7 +59,7 @@ pip install -r requirements.txt
   ```bash
   python training/expanded_training.py
   ```
-  Uses training_configurations/ppo_config.yaml and saves best to saved_models/ppo_model_expanded.zip (via early stopping).
+Uses training_configurations/ppo_config.yaml and saves best to saved_models/ppo_model_expanded.zip (via early stopping).
 
 ## Evaluation
 Use a single CLI for both algorithms and environments.
@@ -102,4 +103,72 @@ The same approach works for DQN (import DQN and load the matching checkpoint). T
 - training_configurations/ppo_config.yaml: PPO hyperparameters (policy, n_steps, batch_size, learning_rate, gamma, etc.).
 - training_configurations/dqn_config.yaml: DQN hyperparameters (buffer_size, train_freq, gradient_steps, target_update_interval, etc.).
 - training_configurations/env_config.yaml: grid_rows, grid_cols, num_obstacles; also used to derive max_episode_steps and flatten settings via training YAMLs.
+
+## Docker
+Build and run the project in a clean Ubuntu 22.04 container. You can use either Docker Compose (simplest) or plain Docker CLI.
+
+Prerequisites
+- Docker 24+ installed (docker --version should report a recent version).
+
+### With Docker Compose 
+- Build the image and start training (default CMD):
+  ```bash
+  docker compose up --build
+  ```
+  This runs `python3 training/expanded_training.py` and persists models to `saved_models` on your host (volume mount is defined in `docker-compose.yml`).
+
+- Run in the background and follow logs:
+  ```bash
+  docker compose up -d --build
+  docker compose logs -f
+  ```
+
+- Stop and clean up:
+  ```bash
+  docker compose down
+  ```
+
+- Override the command (e.g., evaluation instead of training):
+  ```bash
+  docker compose run --rm rl \
+    python3 evaluation/evaluation.py --model ppo --env expanded
+  ```
+
+### With Docker CLI
+- Build the image from the local repository context:
+  ```bash
+  docker build -t rl-assignment .
+  ```
+
+- Train with PPO on the expanded environment (default CMD):
+  ```bash
+  docker run -it --rm \
+    -v "$(pwd)/saved_models:/app/saved_models" \
+    rl-assignment
+  ```
+
+- Run evaluation instead of training:
+  ```bash
+  docker run -it --rm rl-assignment \
+    python3 evaluation/evaluation.py --model ppo --env expanded
+  ```
+
+- Examples for the base environment:
+  ```bash
+  # PPO (base)
+  docker run -it --rm rl-assignment \
+    python3 evaluation/evaluation.py --model ppo --env base --reward base
+
+  # DQN (base)
+  docker run -it --rm rl-assignment \
+    python3 evaluation/evaluation.py --model dqn --env base --reward base
+  ```
+
+- Open an interactive shell in the container:
+  ```bash
+  docker run -it --rm \
+    -v "$(pwd):/app" \
+    --entrypoint bash \
+    rl-assignment
+  ```
 

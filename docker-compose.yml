@@ -1,0 +1,18 @@
+version: "3.9"
+
+services:
+  rl:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: rl-assignment:latest
+    container_name: rl-assignment
+    working_dir: /app
+    stdin_open: true
+    tty: true
+    # Runs the default CMD from Dockerfile: python3 training/expanded_training.py
+    # To override at runtime, use for example:
+    #   docker compose run --rm rl python3 evaluation/evaluation.py --model ppo --env expanded
+    volumes:
+      - ./saved_models:/app/saved_models
+
