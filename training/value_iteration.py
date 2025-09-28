@@ -205,20 +205,81 @@ def value_iteration(
     return V
 
 
+
+def pick_action(V_star, agent_rc, gamma, M, N, goal_rc, obstacles_rc):
+    """
+    Selects the greedy action under V* using one-step lookahead:
+        argmax_a E[r + gamma * V*(s') | s, a]
+    where the expectation is computed by the existing `find_expectation` helper.
+    Args:
+        V_star: 2D numpy array of shape (H, W) with optimal state values on the padded canvas.
+        agent_rc: (row, col) in INTERIOR coords (0..M-1, 0..N-1) for the current agent position.
+        gamma: discount factor in (0, 1].
+        M, N: interior grid size used to construct the padded canvas (H=M+2, W=N+2).
+        goal_rc: (row, col) in INTERIOR coords for the goal.
+        obstacles_rc: iterable of (row, col) INTERIOR coords for obstacles.
+    Returns:
+        int in {0,1,2,3} (0=up, 1=down, 2=left, 3=right).
+    """
+    # Build the padded-canvas observation for the current agent position
+    state = build_state(M, N, agent_rc, goal_rc, obstacles_rc)
+
+    # If we're in an absorbing state, pick any action uniformly at random
+    if _is_terminal(state) is not None:
+        return int(np.random.default_rng().integers(0, 4))
+
+    actions = (0, 1, 2, 3)  # up, down, left, right
+    best_action = 0
+    best_score = -float("inf")
+
+    # One-step lookahead using the deterministic model via find_expectation
+    for a in actions:
+        score = find_expectation(state, a, V_star, gamma)
+        if score > best_score:
+            best_score = score
+            best_action = a
+
+    return int(best_action)
+
+
+
+
 if __name__ == "__main__":
     # Load a random layout from the base environment, then run value iteration on it.
     
 
     cfg = load_grid_config(REPO_ROOT / "training_configurations" / "env_config.yaml")
     env = create_env_from_config(cfg)
-    obs, _ = env.reset()  # sample a random layout
 
-    rows, cols = obs.shape[1], obs.shape[2]  # e.g., rows=6, cols=6
-    goal_rc = tuple(map(int, np.argwhere(obs[1] > 0.5)[0]))  # e.g., (5, 1)
-    obstacles_rc = [tuple(map(int, xy)) for xy in np.argwhere(obs[2] > 0.5)]  # e.g., [(1, 3), (2, 4), ...]
+    # Evaluate over 100 episodes: each episode samples a fresh layout,
+    # runs value iteration to obtain V*, then rolls out greedily.
+    episodes = 100
+    gamma = 0.99
+    successes = 0
+    lengths = []
+    for _ in range(episodes):
+        obs, _ = env.reset()
+        rows, cols = obs.shape[1], obs.shape[2]
+        goal_rc = tuple(map(int, np.argwhere(obs[1] > 0.5)[0]))
+        obstacles_rc = [tuple(map(int, xy)) for xy in np.argwhere(obs[2] > 0.5)]
 
-    print(f"Sampled layout: rows={rows}, cols={cols}, goal={goal_rc}, obstacles={len(obstacles_rc)}")
+        V_star = value_iteration(rows, cols, goal_rc, obstacles_rc, gamma=gamma, theta=1e-5, max_iters=500)
 
-    V_star = value_iteration(rows, cols, goal_rc, obstacles_rc, gamma=0.99, theta=1e-5, max_iters=500)
-    print("V*(s) on padded canvas (agent-layer values):", V_star)
+        terminated = False
+        truncated = False
+        info = {}
+        obs_t = obs
+        ep_len = 0
+        while not (terminated or truncated):
+            agent_rc = tuple(map(int, np.argwhere(obs_t[0] > 0.5)[0]))
+            a = pick_action(V_star, agent_rc, gamma, rows, cols, goal_rc, obstacles_rc)
+            obs_t, reward, terminated, truncated, info = env.step(int(a))
+            ep_len += 1
+        if info.get("reason") == "goal":
+            successes += 1
+        lengths.append(ep_len)
 
+    rate = successes / episodes
+    avg_len = float(np.mean(lengths)) if lengths else 0.0
+    print(f"Success rate over {episodes} episodes: {successes}/{episodes} = {rate:.2%}")
+    print(f"Average trajectory length over {episodes} episodes: {avg_len:.2f}")
